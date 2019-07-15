@@ -5,7 +5,8 @@ import (
 	"io"
 	"math/rand"
 	"time"
-
+	
+	tracing "github.com/opentracing/opentracing-go"
 	console "github.com/AsynkronIT/goconsole"
 	"github.com/AsynkronIT/protoactor-go/actor"
 	"github.com/AsynkronIT/protoactor-go/actor/middleware/opentracing"
@@ -21,9 +22,11 @@ func main() {
 
 	rootContext := actor.NewRootContext(nil).WithSpawnMiddleware(opentracing.TracingMiddleware())
 
+	span := tracing.GlobalTracer().StartSpan("root")
+
 	pid := rootContext.SpawnPrefix(createProps(5), "root")
 	for i := 0; i < 3; i++ {
-		rootContext.RequestFuture(pid, &request{i}, 10*time.Second).Wait()
+		rootContext.RequestFutureWithSpan(pid, &request{i}, 10*time.Second, span.Context()).Wait()
 	}
 	console.ReadLine()
 }

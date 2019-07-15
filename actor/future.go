@@ -1,12 +1,15 @@
 package actor
 
 import (
+	"fmt"
 	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
-
+	
+	"github.com/opentracing/opentracing-go"
+	olog "github.com/opentracing/opentracing-go/log"
 	"github.com/AsynkronIT/protoactor-go/log"
 )
 
@@ -45,6 +48,11 @@ type Future struct {
 	t           *time.Timer
 	pipes       []*PID
 	completions []func(res interface{}, err error)
+	span 		opentracing.Span
+}
+
+func (f *Future) SetSpan(span opentracing.Span) {
+	f.span = span
 }
 
 // PID to the backing actor for the Future result
@@ -91,6 +99,13 @@ func (f *Future) wait() {
 // Result waits for the future to resolve
 func (f *Future) Result() (interface{}, error) {
 	f.wait()
+	if f.span != nil {
+		f.span.LogFields(
+			olog.String("Message", "Result returned"),
+			olog.String("Result", fmt.Sprintf("%s", f.result)),
+		)
+		f.span.Finish()
+	}
 	return f.result, f.err
 }
 

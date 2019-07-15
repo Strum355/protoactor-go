@@ -3,9 +3,10 @@ package actor
 import (
 	"errors"
 	"time"
-
+	
 	"github.com/AsynkronIT/protoactor-go/log"
 	"github.com/emirpasic/gods/stacks/linkedliststack"
+	"github.com/opentracing/opentracing-go"
 )
 
 type contextState int32
@@ -95,12 +96,14 @@ type actorContext struct {
 	producer          Producer
 	messageOrEnvelope interface{}
 	state             contextState
+	header			  messageHeader
 }
 
 func newActorContext(props *Props, parent *PID) *actorContext {
 	this := &actorContext{
 		parent: parent,
 		props:  props,
+		header: make(map[string]string),
 	}
 
 	this.incarnateActor()
@@ -302,6 +305,26 @@ func (ctx *actorContext) RequestFuture(pid *PID, message interface{}, timeout ti
 		Message: message,
 		Sender:  future.PID(),
 	}
+	ctx.sendUserMessage(pid, env)
+
+	return future
+}
+
+func (ctx *actorContext) RequestFutureWithSpan(pid *PID, message interface{}, timeout time.Duration, span opentracing.SpanContext) *Future {
+	future := NewFuture(timeout)
+	env := &MessageEnvelope{
+		Header:  nil,
+		Message: message,
+		Sender:  future.PID(),
+	}
+	
+	childSpan := opentracing.GlobalTracer().StartSpan("root_context.RequestFutureWithSpan", opentracing.ChildOf(span))
+
+	carrier := opentracing.TextMapWriter(&MessageEnvelopeWriter{env})
+	opentracing.GlobalTracer().Inject(childSpan.Context(), opentracing.TextMap, carrier)
+
+	future.SetSpan(childSpan)
+
 	ctx.sendUserMessage(pid, env)
 
 	return future

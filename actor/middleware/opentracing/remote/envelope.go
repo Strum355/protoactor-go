@@ -1,4 +1,4 @@
-package opentracing
+package remote
 
 import (
 	_"fmt"
@@ -6,11 +6,11 @@ import (
 	"github.com/opentracing/opentracing-go"
 )
 
-type MessageHeaderReader struct {
+type messageHeaderReader struct {
 	ReadOnlyMessageHeader actor.ReadonlyMessageHeader
 }
 
-func (reader *MessageHeaderReader) ForeachKey(handler func(key, val string) error) error {
+func (reader *messageHeaderReader) ForeachKey(handler func(key, val string) error) error {
 	if reader.ReadOnlyMessageHeader == nil {
 		//fmt.Println("MESSAGE HEADER EMPTY")
 		return nil
@@ -26,16 +26,16 @@ func (reader *MessageHeaderReader) ForeachKey(handler func(key, val string) erro
 	return nil
 }
 
-var _ opentracing.TextMapReader = &MessageHeaderReader{}
+var _ opentracing.TextMapReader = &messageHeaderReader{}
 
-type MessageEnvelopeWriter struct {
+type messageEnvelopeWriter struct {
 	MessageEnvelope *actor.MessageEnvelope
 }
 
-func (writer *MessageEnvelopeWriter) Set(key, val string) {
+func (writer *messageEnvelopeWriter) Set(key, val string) {
 	//fmt.Printf("WRITE KEY %s VALUE %s\n", key, val)
 	writer.MessageEnvelope.SetHeader(key, val)
 	//writer.MessageEnvelope.SetHeader("asdf", "abcd")
 }
 
-var _ opentracing.TextMapWriter = &MessageEnvelopeWriter{}
+var _ opentracing.TextMapWriter = &messageEnvelopeWriter{}

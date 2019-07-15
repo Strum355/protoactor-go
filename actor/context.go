@@ -1,6 +1,9 @@
 package actor
 
-import "time"
+import (
+	"github.com/opentracing/opentracing-go"
+	"time"
+)
 
 // Context contains contextual information for actors
 type Context interface {
@@ -28,6 +31,11 @@ type ReceiverContext interface {
 type SpawnerContext interface {
 	infoPart
 	spawnerPart
+}
+
+type InfoMessageContext interface {
+	infoPart
+	messagePart
 }
 
 type infoPart interface {
@@ -99,6 +107,8 @@ type senderPart interface {
 
 	// RequestFuture sends a message to a given PID and returns a Future
 	RequestFuture(pid *PID, message interface{}, timeout time.Duration) *Future
+
+	RequestFutureWithSpan(pid *PID, message interface{}, timeout time.Duration, span opentracing.SpanContext) *Future
 }
 
 type receiverPart interface {

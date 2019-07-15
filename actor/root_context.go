@@ -1,6 +1,10 @@
 package actor
 
-import "time"
+import (
+	"github.com/opentracing/opentracing-go/log"
+	"github.com/opentracing/opentracing-go"
+	"time"
+)
 
 type RootContext struct {
 	senderMiddleware SenderFunc
@@ -117,6 +121,30 @@ func (rc *RootContext) RequestFuture(pid *PID, message interface{}, timeout time
 		Sender:  future.PID(),
 	}
 	rc.sendUserMessage(pid, env)
+	return future
+}
+
+func (rc *RootContext) RequestFutureWithSpan(pid *PID, message interface{}, timeout time.Duration, span opentracing.SpanContext) *Future {
+	future := NewFuture(timeout)
+	env := &MessageEnvelope{
+		Header:  rc.headers,
+		Message: message,
+		Sender:  future.PID(),
+	}
+	
+	childSpan := opentracing.GlobalTracer().StartSpan("root_context.RequestFutureWithSpan", opentracing.ChildOf(span))
+
+	carrier := opentracing.TextMapWriter(&MessageEnvelopeWriter{env})
+	opentracing.GlobalTracer().Inject(childSpan.Context(), opentracing.TextMap, carrier)
+
+	future.SetSpan(childSpan)
+
+	rc.sendUserMessage(pid, env)
+	childSpan.LogFields(
+		log.String("Message", "Sent user message"),
+		log.String("Recipient PID", pid.String()),
+		log.String("Sender PID", rc.Self().String()),
+	)
 	return future
 }
 

@@ -1,4 +1,4 @@
-package opentracing
+package remote
 
 import "github.com/AsynkronIT/protoactor-go/log"
 
