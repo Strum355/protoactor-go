@@ -11,8 +11,11 @@ import (
 	"time"
 
 	"github.com/AsynkronIT/protoactor-go/actor"
+	tracing "github.com/AsynkronIT/protoactor-go/actor/middleware/opentracing"
 	"github.com/AsynkronIT/protoactor-go/cluster"
 	"github.com/AsynkronIT/protoactor-go/remote"
+	"github.com/opentracing/opentracing-go"
+	olog "github.com/opentracing/opentracing-go/log"
 	"github.com/gogo/protobuf/proto"
 )
 
@@ -21,6 +24,11 @@ var _ = fmt.Errorf
 var _ = math.Inf
 
 var rootContext = actor.EmptyRootContext
+
+func init() {
+	rootContext.WithSpawnMiddleware(tracing.TracingMiddleware())
+}
+
 {{ range $service := .Services}}	
 var x{{ $service.Name }}Factory func() {{ $service.Name }}
 
@@ -92,6 +100,73 @@ func (g *{{ $service.Name }}Grain) {{ $method.Name }}WithOpts(r *{{ $method.Inpu
 			return res, err
 		} else if opts.RetryAction != nil {
 				opts.RetryAction(i)
+		}
+	}
+	return nil, err
+}
+
+// {{ $method.Name }} requests the execution on to the cluster using default options
+func (g *{{ $service.Name }}Grain) {{ $method.Name }}WithSpan(r *{{ $method.Input.Name }}, spanCtx opentracing.SpanContext) (*{{ $method.Output.Name }}, error) {
+	return g.{{ $method.Name }}WithOptsWithSpan(r, cluster.DefaultGrainCallOptions(), spanCtx)
+}
+
+// {{ $method.Name }}WithOpts requests the execution on to the cluster
+func (g *{{ $service.Name }}Grain) {{ $method.Name }}WithOptsWithSpan(r *{{ $method.Input.Name }}, opts *cluster.GrainCallOptions, spanCtx opentracing.SpanContext) (*{{ $method.Output.Name }}, error) {
+	span := opentracing.GlobalTracer().StartSpan("proto_gen.{{ $method.Name }}WithOptsWithSpan", opentracing.ChildOf(spanCtx))
+	span.SetTag("{{ $method.Name }}ID", g.ID)
+	defer span.Finish()
+
+	fun := func() (*{{ $method.Output.Name }}, error) {
+			pid, statusCode := cluster.GetWithSpan(g.ID, "{{ $service.Name }}", span.Context())
+			if statusCode != remote.ResponseStatusCodeOK && statusCode != remote.ResponseStatusCodePROCESSNAMEALREADYEXIST {
+				return nil, fmt.Errorf("get PID failed with StatusCode: %v", statusCode)
+			}
+			bytes, err := proto.Marshal(r)
+			if err != nil {
+				return nil, err
+			}
+			request := &cluster.GrainRequest{MethodIndex: {{ $method.Index }}, MessageData: bytes}
+			response, err := rootContext.RequestFutureWithSpan(pid, request, opts.Timeout, span.Context()).Result()
+			if err != nil {
+				return nil, err
+			}
+			switch msg := response.(type) {
+			case *cluster.GrainResponse:
+				result := &{{ $method.Output.Name }}{}
+				err = proto.Unmarshal(msg.MessageData, result)
+				if err != nil {
+					return nil, err
+				}
+				return result, nil
+			case *cluster.GrainErrorResponse:
+				return nil, errors.New(msg.Err)
+			default:
+				return nil, errors.New("unknown response")
+			}
+		}
+	
+	var res *{{ $method.Output.Name }}
+	var err error
+	for i := 0; i < opts.RetryCount; i++ {
+		res, err = fun()
+		if err == nil {
+			span.LogFields(olog.String("message", "got success response"))
+			return res, nil
+		} else if err.Error() != "future: timeout" {
+			span.LogFields(olog.Error(err))
+			return res, err
+		} else if opts.RetryAction != nil {
+			opts.RetryAction(i)
+		}
+
+		// Trace retries
+		if i+1 < opts.RetryCount {
+			span.LogFields(
+				olog.String("message", "retrying request"),
+				olog.Error(err),
+				olog.Int("retryCount", i),
+				olog.Int("retryThreshold", opts.RetryCount),
+			)
 		}
 	}
 	return nil, err

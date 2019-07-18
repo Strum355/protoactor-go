@@ -40,12 +40,9 @@ func NewWithConfig(consulConfig *api.Config) (*ConsulProvider, error) {
 	}
 	p := &ConsulProvider{
 		client:             client,
-		/* ttl:                3 * time.Second,
+		ttl:                3 * time.Second,
 		refreshTTL:         1 * time.Second,
-		deregisterCritical: 60 * time.Second, */
-		ttl:                3 * time.Hour,
-		refreshTTL:         1 * time.Hour,
-		deregisterCritical: 60 * time.Hour,
+		deregisterCritical: 60 * time.Second,
 		blockingWaitTime:   20 * time.Second,
 	}
 	return p, nil

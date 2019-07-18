@@ -1,8 +1,9 @@
 package actor
 
 import (
-	"github.com/opentracing/opentracing-go"
 	"time"
+
+	"github.com/opentracing/opentracing-go"
 )
 
 // Context contains contextual information for actors
@@ -33,11 +34,6 @@ type SpawnerContext interface {
 	spawnerPart
 }
 
-type InfoMessageContext interface {
-	infoPart
-	messagePart
-}
-
 type infoPart interface {
 	// Parent returns the PID for the current actors parent
 	Parent() *PID
@@ -47,6 +43,12 @@ type infoPart interface {
 
 	// Actor returns the actor associated with this context
 	Actor() Actor
+
+	Span() opentracing.Span
+
+	SetSpan(opentracing.Span)
+
+	ClearSpan()
 }
 
 type basePart interface {

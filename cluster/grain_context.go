@@ -3,6 +3,8 @@ package cluster
 import (
 	"time"
 
+	"github.com/opentracing/opentracing-go"
+
 	"github.com/AsynkronIT/protoactor-go/actor"
 )
 
@@ -44,4 +46,10 @@ type GrainContext interface {
 	//
 	// ErrNameExists will be returned if id already exists
 	SpawnNamed(props *actor.Props, id string) (*actor.PID, error)
+
+	Span() opentracing.Span
+
+	SetSpan(opentracing.Span)
+
+	ClearSpan()
 }

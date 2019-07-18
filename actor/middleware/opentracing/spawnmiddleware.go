@@ -2,14 +2,14 @@ package opentracing
 
 import (
 	"github.com/AsynkronIT/protoactor-go/actor"
-	_"github.com/AsynkronIT/protoactor-go/log"
+	_ "github.com/AsynkronIT/protoactor-go/log"
 	_ "github.com/opentracing/opentracing-go/log"
 )
 
 func SpawnMiddleware() actor.SpawnMiddleware {
 	return func(next actor.SpawnFunc) actor.SpawnFunc {
 		return func(id string, props *actor.Props, parentContext actor.SpawnerContext) (pid *actor.PID, e error) {
-			/* self := parentContext.Self() */
+			//self := parentContext.Self()
 			pid, err := next(id, props, parentContext)
 			if err != nil {
 				//logger.Debug("SPAWN got error trying to spawn", log.Stringer("PID", self), log.TypeOf("ActorType", parentContext.Actor()), log.Error(err))

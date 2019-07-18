@@ -1,9 +1,10 @@
 package actor
 
 import (
-	"github.com/opentracing/opentracing-go/log"
-	"github.com/opentracing/opentracing-go"
+	"fmt"
 	"time"
+
+	"github.com/opentracing/opentracing-go"
 )
 
 type RootContext struct {
@@ -11,6 +12,7 @@ type RootContext struct {
 	spawnMiddleware  SpawnFunc
 	headers          messageHeader
 	guardianStrategy SupervisorStrategy
+	span             opentracing.Span
 }
 
 var EmptyRootContext = &RootContext{
@@ -83,6 +85,18 @@ func (rc *RootContext) Actor() Actor {
 	return nil
 }
 
+func (rc *RootContext) Span() opentracing.Span {
+	return rc.span
+}
+
+func (rc *RootContext) SetSpan(span opentracing.Span) {
+	rc.span = span
+}
+
+func (rc *RootContext) ClearSpan() {
+	rc.span = nil
+}
+
 //
 // Interface: sender
 //
@@ -131,20 +145,21 @@ func (rc *RootContext) RequestFutureWithSpan(pid *PID, message interface{}, time
 		Message: message,
 		Sender:  future.PID(),
 	}
-	
+
 	childSpan := opentracing.GlobalTracer().StartSpan("root_context.RequestFutureWithSpan", opentracing.ChildOf(span))
+	childSpan.SetTag("recipientPID", pid.String())
+	childSpan.SetTag("senderPID", rc.Self().String())
+	childSpan.SetTag("message", "sent user message")
+	childSpan.SetTag("messageType", fmt.Sprintf("%T", message))
 
 	carrier := opentracing.TextMapWriter(&MessageEnvelopeWriter{env})
 	opentracing.GlobalTracer().Inject(childSpan.Context(), opentracing.TextMap, carrier)
 
+	// set span on the future so that we can finish the span when the future returns
+	// assumes that the common case is to call `RequestFutureWithSpan(...).Result()`
 	future.SetSpan(childSpan)
 
 	rc.sendUserMessage(pid, env)
-	childSpan.LogFields(
-		log.String("Message", "Sent user message"),
-		log.String("Recipient PID", pid.String()),
-		log.String("Sender PID", rc.Self().String()),
-	)
 	return future
 }
 

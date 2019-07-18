@@ -96,7 +96,7 @@ func UnwrapEnvelopeSender(message interface{}) *PID {
 	return nil
 }
 
-// OPENTRACING 
+// OPENTRACING
 
 type MessageHeaderReader struct {
 	ReadOnlyMessageHeader ReadonlyMessageHeader
@@ -104,12 +104,10 @@ type MessageHeaderReader struct {
 
 func (reader *MessageHeaderReader) ForeachKey(handler func(key, val string) error) error {
 	if reader.ReadOnlyMessageHeader == nil {
-		//fmt.Println("MESSAGE HEADER EMPTY")
 		return nil
 	}
-	//fmt.Printf("KEY LENGTH %d\n", reader.ReadOnlyMessageHeader.Length())
+
 	for _, key := range reader.ReadOnlyMessageHeader.Keys() {
-		//fmt.Printf("READ KEY %s VALUE %s\n", key, reader.ReadOnlyMessageHeader.Get(key))
 		err := handler(key, reader.ReadOnlyMessageHeader.Get(key))
 		if err != nil {
 			return err
@@ -123,7 +121,5 @@ type MessageEnvelopeWriter struct {
 }
 
 func (writer *MessageEnvelopeWriter) Set(key, val string) {
-	//fmt.Printf("WRITE KEY %s VALUE %s\n", key, val)
 	writer.MessageEnvelope.SetHeader(key, val)
-	//writer.MessageEnvelope.SetHeader("asdf", "abcd")
 }

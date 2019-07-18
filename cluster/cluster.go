@@ -1,9 +1,10 @@
 package cluster
 
 import (
-	olog "github.com/opentracing/opentracing-go/log"
-	"github.com/opentracing/opentracing-go"
 	"time"
+
+	"github.com/opentracing/opentracing-go"
+	olog "github.com/opentracing/opentracing-go/log"
 
 	"github.com/AsynkronIT/gonet"
 	"github.com/AsynkronIT/protoactor-go/actor"
@@ -57,7 +58,51 @@ func Shutdown(graceful bool) {
 
 // Get a PID to a virtual actor
 func Get(name string, kind string) (*actor.PID, remote.ResponseStatusCode) {
-	return GetWithSpan(name, kind, nil) 
+	// Check Cache
+	if pid, ok := pidCache.getCache(name); ok {
+		return pid, remote.ResponseStatusCodeOK
+	}
+
+	// Get Pid
+	address := memberList.getPartitionMember(name, kind)
+	if address == "" {
+		// No available member found
+		return nil, remote.ResponseStatusCodeUNAVAILABLE
+	}
+
+	// package the request as a remote.ActorPidRequest
+	req := &remote.ActorPidRequest{
+		Kind: kind,
+		Name: name,
+	}
+
+	// ask the DHT partition for this name to give us a PID
+	remotePartition := partition.partitionForKind(address, kind)
+	r, err := rootContext.RequestFuture(remotePartition, req, cfg.TimeoutTime).Result()
+	if err == actor.ErrTimeout {
+		plog.Error("PidCache Pid request timeout")
+		return nil, remote.ResponseStatusCodeTIMEOUT
+	} else if err != nil {
+		plog.Error("PidCache Pid request error", log.Error(err))
+		return nil, remote.ResponseStatusCodeERROR
+	}
+
+	response, ok := r.(*remote.ActorPidResponse)
+	if !ok {
+		return nil, remote.ResponseStatusCodeERROR
+	}
+
+	statusCode := remote.ResponseStatusCode(response.StatusCode)
+	switch statusCode {
+	case remote.ResponseStatusCodeOK:
+		// save cache
+		pidCache.addCache(name, response.Pid)
+		// tell the original requester that we have a response
+		return response.Pid, statusCode
+	default:
+		// forward to requester
+		return response.Pid, statusCode
+	}
 }
 
 func GetWithSpan(name string, kind string, span opentracing.SpanContext) (*actor.PID, remote.ResponseStatusCode) {
@@ -70,8 +115,8 @@ func GetWithSpan(name string, kind string, span opentracing.SpanContext) (*actor
 	// Check Cache
 	if pid, ok := pidCache.getCache(name); ok {
 		childSpan.LogFields(
-			olog.String("CachePID", pid.String()),
-			olog.String("Message", "PID found in cache"),
+			olog.String("PID", pid.String()),
+			olog.String("message", "PID found in cache"),
 		)
 		return pid, remote.ResponseStatusCodeOK
 	}
@@ -81,8 +126,8 @@ func GetWithSpan(name string, kind string, span opentracing.SpanContext) (*actor
 	if address == "" {
 		// No available member found
 		childSpan.LogFields(
-			olog.String("Message", "No member found"),
-			olog.Int32("ResponseStatusCode", int32(remote.ResponseStatusCodeUNAVAILABLE)),
+			olog.String("message", "no member found"),
+			olog.Int32("responseStatusCode", int32(remote.ResponseStatusCodeUNAVAILABLE)),
 		)
 		return nil, remote.ResponseStatusCodeUNAVAILABLE
 	}
@@ -99,8 +144,8 @@ func GetWithSpan(name string, kind string, span opentracing.SpanContext) (*actor
 	if err == actor.ErrTimeout {
 		plog.Error("PidCache Pid request timeout")
 		childSpan.LogFields(
-			olog.String("Message", "Actor PID request timeout"),
-			olog.Int32("ResponseStatusCode", int32(remote.ResponseStatusCodeTIMEOUT)),
+			olog.String("message", "actor PID request timeout"),
+			olog.Int32("responseStatusCode", int32(remote.ResponseStatusCodeTIMEOUT)),
 		)
 		return nil, remote.ResponseStatusCodeTIMEOUT
 	} else if err != nil {
@@ -119,8 +164,8 @@ func GetWithSpan(name string, kind string, span opentracing.SpanContext) (*actor
 		// save cache
 		pidCache.addCache(name, response.Pid)
 		childSpan.LogFields(
-			olog.String("Message", "Actor PID lookup success"),
-			olog.String("LookupPID", response.Pid.String()),
+			olog.String("message", "actor PID lookup success"),
+			olog.String("PID", response.Pid.String()),
 		)
 		// tell the original requester that we have a response
 		return response.Pid, statusCode

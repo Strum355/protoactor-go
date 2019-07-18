@@ -2,8 +2,9 @@ package actor
 
 import (
 	"errors"
+	"fmt"
 	"time"
-	
+
 	"github.com/AsynkronIT/protoactor-go/log"
 	"github.com/emirpasic/gods/stacks/linkedliststack"
 	"github.com/opentracing/opentracing-go"
@@ -96,14 +97,13 @@ type actorContext struct {
 	producer          Producer
 	messageOrEnvelope interface{}
 	state             contextState
-	header			  messageHeader
+	span              opentracing.Span
 }
 
 func newActorContext(props *Props, parent *PID) *actorContext {
 	this := &actorContext{
 		parent: parent,
 		props:  props,
-		header: make(map[string]string),
 	}
 
 	this.incarnateActor()
@@ -141,6 +141,18 @@ func (ctx *actorContext) Actor() Actor {
 	return ctx.actor
 }
 
+func (ctx *actorContext) Span() opentracing.Span {
+	return ctx.span
+}
+
+func (ctx *actorContext) SetSpan(span opentracing.Span) {
+	ctx.span = span
+}
+
+func (ctx *actorContext) ClearSpan() {
+	ctx.span = nil
+}
+
 func (ctx *actorContext) ReceiveTimeout() time.Duration {
 	return ctx.receiveTimeout
 }
@@ -165,6 +177,9 @@ func (ctx *actorContext) Respond(response interface{}) {
 	}
 
 	ctx.Send(ctx.Sender(), response)
+	if ctx.Span() != nil {
+		ctx.Span().Finish()
+	}
 }
 
 func (ctx *actorContext) Stash() {
@@ -317,12 +332,18 @@ func (ctx *actorContext) RequestFutureWithSpan(pid *PID, message interface{}, ti
 		Message: message,
 		Sender:  future.PID(),
 	}
-	
-	childSpan := opentracing.GlobalTracer().StartSpan("root_context.RequestFutureWithSpan", opentracing.ChildOf(span))
+
+	childSpan := opentracing.GlobalTracer().StartSpan("actor_context.RequestFutureWithSpan", opentracing.ChildOf(span))
+	childSpan.SetTag("recipientPID", pid.String())
+	childSpan.SetTag("senderPID", ctx.Self().String())
+	childSpan.SetTag("message", "sent user message")
+	childSpan.SetTag("messageType", fmt.Sprintf("%T", message))
 
 	carrier := opentracing.TextMapWriter(&MessageEnvelopeWriter{env})
 	opentracing.GlobalTracer().Inject(childSpan.Context(), opentracing.TextMap, carrier)
 
+	// set span on the future so that we can finish the span when the future returns
+	// assumes that the common case is to call `RequestFutureWithSpan(...).Result()`
 	future.SetSpan(childSpan)
 
 	ctx.sendUserMessage(pid, env)

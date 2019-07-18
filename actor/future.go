@@ -1,16 +1,16 @@
 package actor
 
 import (
-	"fmt"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
-	
+
+	"github.com/AsynkronIT/protoactor-go/log"
 	"github.com/opentracing/opentracing-go"
 	olog "github.com/opentracing/opentracing-go/log"
-	"github.com/AsynkronIT/protoactor-go/log"
 )
 
 // ErrTimeout is the error used when a future times out before receiving a result.
@@ -48,7 +48,7 @@ type Future struct {
 	t           *time.Timer
 	pipes       []*PID
 	completions []func(res interface{}, err error)
-	span 		opentracing.Span
+	span        opentracing.Span
 }
 
 func (f *Future) SetSpan(span opentracing.Span) {
@@ -100,10 +100,16 @@ func (f *Future) wait() {
 func (f *Future) Result() (interface{}, error) {
 	f.wait()
 	if f.span != nil {
-		f.span.LogFields(
-			olog.String("Message", "Result returned"),
-			olog.String("Result", fmt.Sprintf("%s", f.result)),
-		)
+		fields := []olog.Field{
+			olog.String("message", "Future result returned"),
+			olog.String("result", fmt.Sprintf("%T", f.result)),
+		}
+
+		if f.err != nil {
+			fields = append(fields, olog.Error(f.err))
+		}
+
+		f.span.LogFields(fields...)
 		f.span.Finish()
 	}
 	return f.result, f.err
