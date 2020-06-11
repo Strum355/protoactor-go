@@ -5,15 +5,17 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/AsynkronIT/protoactor-go/cluster"
+	"github.com/AsynkronIT/protoactor-go/eventstream"
 	"github.com/Shopify/sarama"
 )
 
 const (
-	heartbeat = "HEARTBEAT"
 	leaving   = "LEAVING"
+	heartbeat = "HEARTBEAT"
 	update    = "UPDATE"
 
 	topic = "protoactor_control_plane"
@@ -27,8 +29,15 @@ type event struct {
 
 type KafkaProvider struct {
 	id                    string
+	address               string
+	port                  int
 	shutdown              bool
 	errorChan             chan error
+	heartbeater           *time.Ticker
+	collectionTicker      *time.Ticker
+	config                ProviderConfig
+	clusterStatuses       cluster.ClusterTopologyEvent
+	statusMutex           sync.Mutex
 	statusValue           cluster.MemberStatusValue
 	statusValueSerializer cluster.MemberStatusValueSerializer
 	consumer              sarama.PartitionConsumer
@@ -51,8 +60,9 @@ type ProviderConfig struct {
 
 func New(brokerAddrs []string) *KafkaProvider {
 	return NewWithConfig(brokerAddrs, ProviderConfig{
-		Kafka:  sarama.NewConfig(),
-		Offset: sarama.OffsetNewest,
+		Kafka:     sarama.NewConfig(),
+		Offset:    sarama.OffsetNewest,
+		Heartbeat: time.Second * 30,
 	})
 }
 
@@ -75,6 +85,7 @@ func NewWithConfig(brokerAddrs []string, provConfig ProviderConfig) *KafkaProvid
 	return &KafkaProvider{
 		consumer:  pConsumer,
 		producer:  producer,
+		config:    provConfig,
 		errorChan: make(chan error),
 		consumeErrFunc: func(err error) {
 			log.Println("[CLUSTER] [KAFKA] Error consuming Kafka message:", err)
@@ -91,6 +102,8 @@ func (p *KafkaProvider) RegisterMember(clusterName string, address string, port 
 	statusValue cluster.MemberStatusValue, serializer cluster.MemberStatusValueSerializer) error {
 
 	p.id = fmt.Sprintf("%s@%s:%d", clusterName, address, port)
+	p.address = address
+	p.port = port
 	p.statusValue = statusValue
 	p.statusValueSerializer = serializer
 
@@ -106,6 +119,11 @@ func (p *KafkaProvider) RegisterMember(clusterName string, address string, port 
 		Value: sarama.ByteEncoder(b),
 	}
 	_, _, err = p.producer.SendMessage(msg)
+
+	p.updateClusterOnTick()
+
+	p.jumpstartHeart()
+
 	return err
 }
 
@@ -114,7 +132,7 @@ func (p *KafkaProvider) MonitorMemberStatusChanges() {
 		for !p.shutdown {
 			select {
 			case msg := <-p.consumer.Messages():
-				p.notifyStatuses(msg)
+				p.processMemberStatusChange(msg)
 			case err := <-p.consumer.Errors():
 				p.consumeErrFunc(err)
 			}
@@ -122,22 +140,54 @@ func (p *KafkaProvider) MonitorMemberStatusChanges() {
 	}()
 }
 
-func (p *KafkaProvider) collectUntil() {
-
+func (p *KafkaProvider) processMemberStatusChange(msg *sarama.ConsumerMessage) {
+	// TODO: transform msg into member_status.go->MemberStatus
 }
 
-func (p *KafkaProvider) notifyStatuses(msg *sarama.ConsumerMessage) {
+func (p *KafkaProvider) updateClusterOnTick() {
+	p.collectionTicker = time.NewTicker((p.config.Heartbeat * 2) + (p.config.Heartbeat / 10))
+	go func() {
+		for range p.collectionTicker.C {
+			p.notifyStatuses()
+		}
+	}()
+}
 
+func (p *KafkaProvider) notifyStatuses() {
+	p.statusMutex.Lock()
+	defer p.statusMutex.Unlock()
+	eventstream.Publish(p.clusterStatuses)
+	p.clusterStatuses = nil
 }
 
 // sends a heartbeat message to the kafka topic.
 func (p *KafkaProvider) blockingHeartbeat() {
+	b, err := json.Marshal(event{Source: p.id, Type: heartbeat, Meta: map[string]interface{}{
+		"memberStatus": p.statusValueSerializer.ToValueBytes(p.statusValue),
+	}})
+	if err != nil {
+		log.Printf("error creating heartbeat: %v\n", err)
+		return
+	}
 
+	msg := &sarama.ProducerMessage{
+		Topic: topic,
+		Value: sarama.ByteEncoder(b),
+	}
+	_, _, err = p.producer.SendMessage(msg)
+	if err != nil {
+		log.Printf("error heartbeating: %v\n", err)
+	}
 }
 
 // starts the heartbeat in a
 func (p *KafkaProvider) jumpstartHeart() {
-
+	p.heartbeater = time.NewTicker(p.config.Heartbeat)
+	go func() {
+		for range p.heartbeater.C {
+			p.blockingHeartbeat()
+		}
+	}()
 }
 
 func (p *KafkaProvider) UpdateMemberStatusValue(statusValue cluster.MemberStatusValue) error {
@@ -182,6 +232,9 @@ func (s *shutdownErrors) Error() string {
 
 func (p *KafkaProvider) Shutdown() error {
 	var err shutdownErrors
+
+	p.heartbeater.Stop()
+	p.collectionTicker.Stop()
 
 	deregErr := p.DeregisterMember()
 	if err != nil {
